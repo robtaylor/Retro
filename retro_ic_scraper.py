@@ -54,11 +54,25 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class VariantRule:
+    """Ordered rule for classifying a listing into a variant.
+
+    A listing matches if it contains at least one `include` substring AND
+    none of the `exclude` substrings (all case-insensitive).  The first
+    matching rule wins.
+    """
+    label: str
+    include: tuple[str, ...]
+    exclude: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ChipFamily:
     name: str
     queries: list[str]
-    exclude: list[str]
-    variants: dict[str, str]  # title substring -> label
+    exclude: list[str]           # title substrings that reject a listing
+    must_match: list[str]        # at least one must appear or listing is noise
+    variant_rules: list[VariantRule]
 
 
 GLOBAL_EXCLUSIONS = [
@@ -85,7 +99,11 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "sidkick", "swinsid", "armsid", "fpgasid", "arm2sid",
             "nano sid", "nanosid", "x-sid", "xsid", "mixsid",
         ],
-        variants={"6581": "6581", "8580": "8580"},
+        must_match=["sid", "6581", "8580"],
+        variant_rules=[
+            VariantRule("6581", include=("6581",)),
+            VariantRule("8580", include=("8580",)),
+        ],
     ),
     "vic-ii": ChipFamily(
         name="MOS VIC-II",
@@ -97,7 +115,14 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "VIC-II chip",
         ],
         exclude=["vic-20"],
-        variants={"6567": "6567", "6569": "6569", "8562": "8562", "8565": "8565"},
+        must_match=["vic", "6567", "6569", "8562", "8565", "8566"],
+        variant_rules=[
+            VariantRule("6567 (NTSC)", include=("6567",)),
+            VariantRule("6569 (PAL)", include=("6569",)),
+            VariantRule("8562 (NTSC)", include=("8562",)),
+            VariantRule("8565 (PAL)", include=("8565",)),
+            VariantRule("8566", include=("8566",)),
+        ],
     ),
     "denise": ChipFamily(
         name="Amiga Denise",
@@ -105,36 +130,77 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "Amiga Denise 8362",
             "Amiga Denise 8373",
             "Super Denise",
-            "MOS 8362",
-            "MOS 8373",
+            "MOS 8362 Denise",
+            "CSG 8373 Denise",
         ],
         exclude=[],
-        variants={"8362": "8362", "8373": "8373 (Super)"},
+        must_match=[
+            "denise", "8362", "8373", "390433", "391081",
+        ],
+        variant_rules=[
+            # PLCC must be checked before generic 8373
+            VariantRule("PLCC-52 Super (391081)",
+                        include=("391081", "8373r4pl", "plcc")),
+            VariantRule("DIP-48 Super (8373)",
+                        include=("8373", "super denise", "390433"),
+                        exclude=("plcc", "391081", "8373r4pl")),
+            VariantRule("DIP-48 OCS (8362)",
+                        include=("8362",)),
+        ],
     ),
     "paula": ChipFamily(
         name="Amiga Paula",
         queries=[
             "Amiga Paula 8364",
-            "MOS 8364 Paula",
+            "CSG 8364R7 Paula",
         ],
-        exclude=[],
-        variants={"8364": "8364"},
+        exclude=[
+            # Common false positives from "Paula" as a first name
+            "abdul", "choice", "yates", "rego", "cole band", "cole amen",
+            "figurine", "autograph", "vinyl", "record", "album",
+            "photo", "book", "wigs", "blouse", "top ", "dress",
+            "sweater", "nylons", "stockings", "denarius", "brooch",
+            "ski ", "prentiss", "doll", "hey paula", "disco poster",
+        ],
+        must_match=[
+            "8364", "paula chip", "paula audio", "paula sound",
+            "252127", "391077",
+        ],
+        variant_rules=[
+            VariantRule("PLCC-52 (391077)",
+                        include=("391077", "8364r7pl", "plcc")),
+            VariantRule("DIP-48 (8364)",
+                        include=("8364",),
+                        exclude=("plcc", "391077", "8364r7pl")),
+        ],
     ),
     "agnus": ChipFamily(
         name="Amiga Agnus",
         queries=[
-            "Amiga Agnus 8361",
-            "Amiga Agnus 8370",
-            "Amiga Agnus 8372",
+            "Amiga Agnus 8372A",
             "Amiga Agnus 8375",
-            "Fat Agnus",
-            "MOS 8372",
+            "Fat Agnus chip",
+            "Fatter Agnus chip",
+            "CSG 8372 Agnus",
         ],
-        exclude=[],
-        variants={
-            "8361": "8361", "8370": "8370",
-            "8372": "8372", "8375": "8375",
-        },
+        exclude=[
+            # Vitex agnus-castus (herbal supplement)
+            "vitex", "equine", "supplement", "mares", "chasteberry",
+            "hormone", "t-shirt", "shirt",
+        ],
+        must_match=[
+            "agnus", "8361", "8370", "8371", "8372", "8375",
+            "318069", "390544",
+        ],
+        variant_rules=[
+            VariantRule("DIP-48 (8361/8370/8371)",
+                        include=("8361", "8370", "8371")),
+            VariantRule("PLCC-84 8372/A (1MB)",
+                        include=("8372",),
+                        exclude=("8375",)),
+            VariantRule("PLCC-84 8375 (2MB)",
+                        include=("8375", "390544")),
+        ],
     ),
     "ym2151": ChipFamily(
         name="Yamaha YM2151",
@@ -144,17 +210,19 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "YM2151 sound chip",
         ],
         exclude=["breakout board", "module", "synth"],
-        variants={},
+        must_match=["ym2151"],
+        variant_rules=[],
     ),
     "ym2612": ChipFamily(
         name="Yamaha YM2612",
         queries=[
             "Yamaha YM2612",
             "YM2612 OPN2",
-            "YM2612 Sega",
+            "YM2612 Sega Genesis",
         ],
         exclude=["breakout board", "module", "synth"],
-        variants={},
+        must_match=["ym2612"],
+        variant_rules=[],
     ),
     "sn76489": ChipFamily(
         name="TI SN76489",
@@ -164,18 +232,25 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "SN76489AN",
         ],
         exclude=[],
-        variants={"sn76489an": "SN76489AN"},
+        must_match=["sn76489", "76489"],
+        variant_rules=[
+            VariantRule("SN76489AN", include=("sn76489an",)),
+        ],
     ),
     "2a03": ChipFamily(
         name="Ricoh 2A03",
         queries=[
-            "Ricoh 2A03",
+            "Ricoh 2A03 NES",
             "RP2A03 NES",
-            "2A03 NES chip",
-            "Ricoh 2A07",
+            "Ricoh 2A07 NES",
+            "RP2A07 NES",
         ],
         exclude=[],
-        variants={"2a03": "2A03", "2a07": "2A07"},
+        must_match=["2a03", "2a07", "rp2a"],
+        variant_rules=[
+            VariantRule("2A03 (NTSC)", include=("2a03",), exclude=("2a07",)),
+            VariantRule("2A07 (PAL)", include=("2a07",)),
+        ],
     ),
     "discover": ChipFamily(
         name="Discovery",
@@ -187,7 +262,8 @@ CHIP_FAMILIES: dict[str, ChipFamily] = {
             "Amiga custom chip",
         ],
         exclude=[],
-        variants={},
+        must_match=[],  # discovery mode accepts everything
+        variant_rules=[],
     ),
 }
 
@@ -350,6 +426,30 @@ def is_excluded(title: str, family: ChipFamily) -> bool:
     return False
 
 
+def is_relevant(title: str, family: ChipFamily) -> bool:
+    """Check that the title contains at least one family-specific keyword.
+
+    eBay's broad matching often returns unrelated results (e.g. "Yamaha
+    motorcycle parts" for YM2612 queries).  This filter ensures we only
+    keep listings that actually mention the chip.
+    """
+    if not family.must_match:
+        return True  # discovery mode — accept everything
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in family.must_match)
+
+
+def classify_variant(title: str, rules: list[VariantRule]) -> str:
+    """Return the variant label for a listing, or "other/mixed"."""
+    title_lower = title.lower()
+    for rule in rules:
+        has_include = any(kw in title_lower for kw in rule.include)
+        has_exclude = any(kw in title_lower for kw in rule.exclude) if rule.exclude else False
+        if has_include and not has_exclude:
+            return rule.label
+    return "other/mixed"
+
+
 def parse_listings(
     html: str,
     site: str,
@@ -375,6 +475,9 @@ def parse_listings(
             continue
         if is_excluded(title, family):
             log.debug("excluded: %s", title[:80])
+            continue
+        if not is_relevant(title, family):
+            log.debug("not relevant: %s", title[:80])
             continue
 
         price_el = card.select_one(".s-card__price")
@@ -409,6 +512,8 @@ def parse_listings(
         if not title or "shop on ebay" in title.lower():
             continue
         if is_excluded(title, family):
+            continue
+        if not is_relevant(title, family):
             continue
 
         price_el = item.select_one(".s-item__price")
@@ -482,16 +587,35 @@ def write_csv(listings: list[SoldListing], path: str) -> None:
 # Summary statistics
 # ---------------------------------------------------------------------------
 
-def _print_group_stats(label: str, items: list[SoldListing], indent: int = 2) -> None:
-    """Print count / mean / median for a group of listings."""
-    if not items:
-        return
+def _calc_stats(items: list[SoldListing]) -> dict[str, float | int]:
+    """Return count, mean, median, q1, q3, min, max for a group."""
     prices = sorted(i.price for i in items)
     n = len(prices)
-    mean = sum(prices) / n
-    median = prices[n // 2]
-    pad = " " * indent
-    print(f"{pad}{label:20s}: {n:4d} listings, mean {mean:8.2f}, median {median:8.2f}")
+    return {
+        "count": n,
+        "mean": sum(prices) / n,
+        "median": prices[n // 2],
+        "q1": prices[n // 4] if n >= 4 else prices[0],
+        "q3": prices[3 * n // 4] if n >= 4 else prices[-1],
+        "min": prices[0],
+        "max": prices[-1],
+    }
+
+
+def _detect_package(variant_label: str) -> str:
+    """Extract package type from a variant label."""
+    vl = variant_label.lower()
+    if "plcc-84" in vl:
+        return "PLCC-84"
+    if "plcc-52" in vl:
+        return "PLCC-52"
+    if "dip-48" in vl:
+        return "DIP-48"
+    if "dip" in vl:
+        return "DIP"
+    if "plcc" in vl:
+        return "PLCC"
+    return ""
 
 
 def print_summary(listings: list[SoldListing]) -> None:
@@ -499,9 +623,10 @@ def print_summary(listings: list[SoldListing]) -> None:
         print("\nNo listings found.")
         return
 
-    print(f"\n{'=' * 65}")
+    W = 95
+    print(f"\n{'=' * W}")
     print(f"SUMMARY: {len(listings)} unique sold listings scraped")
-    print(f"{'=' * 65}")
+    print(f"{'=' * W}")
 
     # --- By eBay site ---
     by_site: dict[str, list[SoldListing]] = {}
@@ -509,36 +634,73 @@ def print_summary(listings: list[SoldListing]) -> None:
         by_site.setdefault(item.ebay_site, []).append(item)
     print("\nBy eBay site:")
     for site, items in sorted(by_site.items()):
-        prices = [i.price for i in items]
-        mean = sum(prices) / len(prices)
-        print(f"  .{site:5s} : {len(items):4d} listings, mean price {items[0].currency} {mean:.2f}")
+        s = _calc_stats(items)
+        print(f"  .{site:5s} : {s['count']:4d} listings, "
+              f"mean {items[0].currency} {s['mean']:.2f}, "
+              f"median {items[0].currency} {s['median']:.2f}")
 
-    # --- By chip family ---
+    # --- Variant table ---
+    # Header
+    hdr = (f"  {'Chip Family':<16s} {'Variant':<28s} {'Package':<10s} "
+           f"{'Count':>5s} {'Median':>8s} {'Mean':>8s} {'Q1':>8s} {'Q3':>8s}")
+    sep = "  " + "-" * (len(hdr) - 2)
+
+    print(f"\nBy chip family and variant:")
+    print(hdr)
+    print(sep)
+
     by_family: dict[str, list[SoldListing]] = {}
     for item in listings:
         by_family.setdefault(item.chip_family, []).append(item)
 
-    print("\nBy chip family:")
+    grand_total = 0
+
     for fam_id in CHIP_FAMILIES:
         fam_items = by_family.get(fam_id)
         if not fam_items:
             continue
         family = CHIP_FAMILIES[fam_id]
-        _print_group_stats(f"{family.name} (all)", fam_items)
 
-        # Variant breakdown
-        if family.variants:
-            matched_ids: set[int] = set()
-            for substr, label in family.variants.items():
-                variant_items = [
-                    i for i in fam_items if substr.lower() in i.title.lower()
-                ]
-                matched_ids.update(id(i) for i in variant_items)
-                if variant_items:
-                    _print_group_stats(f"  {label}", variant_items, indent=4)
-            other_items = [i for i in fam_items if id(i) not in matched_ids]
-            if other_items:
-                _print_group_stats("  other/mixed", other_items, indent=4)
+        # Classify all items into variants
+        variant_groups: dict[str, list[SoldListing]] = {}
+        for item in fam_items:
+            label = classify_variant(item.title, family.variant_rules) if family.variant_rules else "(all)"
+            variant_groups.setdefault(label, []).append(item)
+
+        # Print variants in rule order, then other/mixed
+        labels_in_order: list[str] = []
+        for rule in family.variant_rules:
+            if rule.label in variant_groups:
+                labels_in_order.append(rule.label)
+        if "(all)" in variant_groups:
+            labels_in_order.append("(all)")
+        if "other/mixed" in variant_groups:
+            labels_in_order.append("other/mixed")
+
+        fam_total = 0
+        for label in labels_in_order:
+            items = variant_groups[label]
+            s = _calc_stats(items)
+            pkg = _detect_package(label)
+            fam_total += s["count"]
+            print(f"  {family.name:<16s} {label:<28s} {pkg:<10s} "
+                  f"{s['count']:5d} {s['median']:8.2f} {s['mean']:8.2f} "
+                  f"{s['q1']:8.2f} {s['q3']:8.2f}")
+
+        # Family subtotal
+        if len(labels_in_order) > 1:
+            s = _calc_stats(fam_items)
+            print(f"  {'':<16s} {'--- subtotal ---':<28s} {'':<10s} "
+                  f"{s['count']:5d} {s['median']:8.2f} {s['mean']:8.2f} "
+                  f"{s['q1']:8.2f} {s['q3']:8.2f}")
+        grand_total += fam_total
+
+    # Grand total
+    print(sep)
+    s = _calc_stats(listings)
+    print(f"  {'TOTAL':<16s} {'':<28s} {'':<10s} "
+          f"{s['count']:5d} {s['median']:8.2f} {s['mean']:8.2f} "
+          f"{s['q1']:8.2f} {s['q3']:8.2f}")
 
     # --- Date range ---
     dated = [i for i in listings if i.date_sold]
@@ -560,7 +722,7 @@ def print_summary(listings: list[SoldListing]) -> None:
     elif n > 0:
         print(f"\nPrices: {', '.join(f'{p:.2f}' for p in all_prices)}")
 
-    print(f"{'=' * 65}")
+    print(f"{'=' * W}")
 
 
 # ---------------------------------------------------------------------------
